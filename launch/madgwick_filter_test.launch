@@ -1,0 +1,9 @@
+<launch>
+	<node pkg="imu_filter_madgwick" type="imu_filter_node" name="imu_filter_madgwick" output="screen">
+
+			<param name="use_mag" value="true"/>
+			
+			<remap from="imu/data_raw" to="imu0"/>
+			<remap from="imu/mag" to="mag0"/>
+	</node>
+</launch>

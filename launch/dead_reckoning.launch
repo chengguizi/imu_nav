@@ -1,0 +1,11 @@
+<launch>
+    <node pkg="imu_nav" type="dead_reckoning_demo" name="dead_reckoning_demo" output="screen">
+    <param name="imu_topic" type="str" value="/imu0" />
+    <param name="imu_coordinate_system" type="str" value="NED" />
+    <param name="apply_calibration" type="bool" value="true" />
+    <param name="imu_calib_file" type="str" value="/home/upsquared/.ros/imu_calib-2018-10-27-ellipse.yaml" />
+    <!-- imu_calib-2018-10-23-ellipse.yaml -->
+    <!-- imu_calib-2018-10-27-ellipse.yaml -->
+    <!-- imu_calib-2018-10-22-17-47-02.yaml -->
+    </node>
+</launch>

@@ -1,0 +1,6 @@
+<launch>
+    <node pkg="imu_nav" type="calibration" name="calibration" output="screen">
+        <param name="accel_range" type="int" value="4" />
+        <param name="gyro_range" type="int" value="1000" />
+    </node>
+</launch>

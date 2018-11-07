@@ -1,0 +1,11 @@
+scale:  # The scale factor is the ratio between measured gravity and the reference 9.8 m/s^2
+  - 0.9974914901801388  # x
+  - 0.9975559456943111  # y
+  - 0.9982701016555849  # z
+bias:  # The bias is the difference between the measured gravity and the reference
+  - 0.06806413523683208  # x: 56.896061
+  - -0.04326184910322173  # y: -36.163374
+  - 0.168206197913169  # z: 140.606650
+# x-limits: [-9.707352, 9.843481]
+# y-limits: [-9.819310, 9.732786]
+# z-limits: [-9.614841, 9.951253]
