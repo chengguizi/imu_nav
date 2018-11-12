@@ -54,7 +54,7 @@ public:
 
         // double stationary_threshold_ms = 0.05;       
         // double small_accel_threshold_ms = 0.20;
-        double dominant_velocity_threshold_ms = 0.4;
+        double dominant_velocity_threshold_ms = 1;
 
         double stationary_threshold_var = 0.005;
         double small_accel_threshold_var = 0.05;
@@ -73,6 +73,11 @@ public:
     void push_back(const sensor_msgs::Imu::ConstPtr &imu_ptr); // accel readings should be after g removal
 
     void pop_current(sensor_msgs::Imu::ConstPtr &curr_imu_ptr, double &delta_t, State &state);
+
+    void reset(){
+        imu_buffer.clear();
+        imu_buffer.resize(imu_buffer_size, {nullptr,Eigen::Vector3d::Zero(),0.0});
+    }
 
 private:
 

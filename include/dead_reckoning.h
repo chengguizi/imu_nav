@@ -16,6 +16,7 @@
 // #include <Eigen/Geometry> 
 
 #include <nav_msgs/Odometry.h>
+#include <geometry_msgs/PoseWithCovarianceStamped.h>
 #include <sensor_msgs/Imu.h>
 
 #include <cmath>
@@ -64,6 +65,7 @@ public:
     void process(const Eigen::Vector3d &accel_world, const ros::Time &stamp, double delta_t, const Eigen::Vector3d &dominant_velocity);
     nav_msgs::Odometry getOdometryMsg();
     sensor_msgs::Imu getAccelWorldMsg();
+    geometry_msgs::PoseWithCovarianceStamped getPoseMsg();
     // bool valid(){return state.valid;}
 
     void setState(const State &state){this->state = state;}
@@ -99,12 +101,12 @@ void DeadReckoning::process(const Eigen::Vector3d &accel_world,const ros::Time &
     state.stamp = stamp;
 
     // Estimate Global Accelerometer Drift
-    static Eigen::Vector3d low_pass = {0,0,0};
-    const double alpha = 0.9;
-    if (state.integration_mode == DOMINANT_DIRECTION){
-        low_pass = alpha*low_pass + (1 - alpha) * dominant_velocity;
-    }else
-        low_pass = 0.99*low_pass;
+    // static Eigen::Vector3d low_pass = {0,0,0};
+    // const double alpha = 0.9;
+    // if (state.integration_mode == DOMINANT_DIRECTION){
+    //     low_pass = alpha*low_pass + (1 - alpha) * dominant_velocity;
+    // }else
+    //     low_pass = 0.99*low_pass;
 
     // std::cout << "low_pass = " << low_pass.transpose() << std::endl;
 
@@ -116,10 +118,10 @@ void DeadReckoning::process(const Eigen::Vector3d &accel_world,const ros::Time &
         // Trim velocity towards origin
         // state.velocity = (1.0/(1.0 + 10*delta_t))*state.velocity;
 
-        if (state.velocity.norm() < 0.05)
+        if (state.velocity.norm() < 0.02)
             state.velocity = {0,0,0};
         else
-            state.velocity = 1.0/(1.0 + 10*delta_t)*state.velocity; //- dominant_velocity*delta_t;
+            state.velocity = 1.0/(1.0 + delta_t)*state.velocity; //- dominant_velocity*delta_t;
         // Set acceleration zero
         
         state.accel = {0,0,0};
@@ -130,29 +132,29 @@ void DeadReckoning::process(const Eigen::Vector3d &accel_world,const ros::Time &
         // if (dominant_velocity.norm()<0.12)
         //     state.accel = {0,0,0};
         
-        if (state.velocity.norm() < 0.05)
+        if (state.velocity.norm() < 0.02)
             state.velocity = {0,0,0};
         else
-            state.velocity = 1.0/(1.0 + delta_t)*state.velocity; //- low_pass*delta_t;
+            state.velocity = 100.0/(100.0 + delta_t)*state.velocity; //- low_pass*delta_t;
 
     }else if(state.integration_mode == DOMINANT_DIRECTION){
         // state.velocity -= low_pass*delta_t;
         // // // Trim velocity towards the dominant direction
         Eigen::Vector3d projected_velocity = dominant_velocity.normalized().dot(state.velocity)*dominant_velocity.normalized();
-        double strength = 50.0/( 50.0 + dominant_velocity.norm());
+        double strength = 200.0/( 200.0 + dominant_velocity.norm());
         state.velocity = projected_velocity*(1-strength) + strength*state.velocity;
 
         // trim acceleration to only contain components in dominant_direction
-        state.accel = dominant_velocity.normalized().dot(state.accel)*dominant_velocity.normalized();
+        // state.accel = dominant_velocity.normalized().dot(state.accel)*dominant_velocity.normalized();
         std::cout << "strength= " << strength << std::endl;
     }else if(state.integration_mode == GENERAL_MOTION){
         
-        if (low_pass.norm() > 1e-3){
-            Eigen::Vector3d projected_velocity = low_pass.normalized().dot(state.velocity)*low_pass.normalized();
-            double strength = 50.0/( 50.0 + low_pass.norm());
-            state.velocity = projected_velocity*(1-strength) + strength*state.velocity;
-            std::cout << "strength= " << strength << std::endl;
-        }
+        // if (low_pass.norm() > 1e-3){
+        //     Eigen::Vector3d projected_velocity = low_pass.normalized().dot(state.velocity)*low_pass.normalized();
+        //     double strength = 50.0/( 50.0 + low_pass.norm());
+        //     state.velocity = projected_velocity*(1-strength) + strength*state.velocity;
+        //     std::cout << "strength= " << strength << std::endl;
+        // }
         
     }
     else{
@@ -194,6 +196,19 @@ sensor_msgs::Imu DeadReckoning::getAccelWorldMsg(){
     imu.orientation.x = imu.orientation.y = imu.orientation.z = 0;
 
     return imu;
+}
+
+geometry_msgs::PoseWithCovarianceStamped DeadReckoning::getPoseMsg(){
+    geometry_msgs::PoseWithCovarianceStamped pose;
+
+    pose.header.stamp = state.stamp;
+    pose.header.frame_id = "world_frame";
+
+    pose.pose.pose.position.x =  state.position(0);
+    pose.pose.pose.position.y =  state.position(1);
+    pose.pose.pose.position.z =  state.position(2);
+
+    return pose;
 }
 
 void DeadReckoning::reset(){

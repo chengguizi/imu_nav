@@ -19,6 +19,7 @@
 #include "velocity_observer.h"
 
 #include <std_msgs/Header.h>
+#include <geometry_msgs/PoseWithCovarianceStamped.h>
 
 #include <cmath>
 
@@ -27,7 +28,11 @@
 
 ros::Subscriber _imu_sub;
 ros::Publisher _odometry_pub;
+ros::Publisher _pose_pub;
 ros::Publisher _imu_world_pub;
+
+
+// ros::Subscriber ekf_sub_;
 
 ros::Subscriber _reset_sub;
 
@@ -40,17 +45,43 @@ struct Calib{
 DeadReckoning deadReckoning;
 VelocityObserver velocityObserver;
 
-void resetCallback(const std_msgs::HeaderPtr &header){
 
-    std::cout << "Reset occurs at " << header->stamp << std::endl;
+Eigen::Quaternion<double> q_int = Eigen::Quaternion<double>{0,0,0,0};
+
+void resetCallback(const std_msgs::HeaderConstPtr &header){
+
+    ROS_WARN_STREAM( "Reset occurs at " << header->stamp );
     deadReckoning.reset();
+    velocityObserver.reset();
+
+    q_int = Eigen::Quaternion<double>{0,0,0,0};
 }
 
 
+template<class Derived>
+  inline Eigen::Matrix<typename Derived::Scalar, 4, 4> omegaMatJPL(const Eigen::MatrixBase<Derived> & vec)
+  {
+    EIGEN_STATIC_ASSERT_VECTOR_SPECIFIC_SIZE(Derived, 3);
+    return (
+        Eigen::Matrix<typename Derived::Scalar, 4, 4>() <<
+        0, vec[2], -vec[1], vec[0],
+        -vec[2], 0, vec[0], vec[1],
+        vec[1], -vec[0], 0, vec[2],
+        -vec[0], -vec[1], -vec[2], 0
+        ).finished();
+  }
+
+typedef const Eigen::Matrix<double, 4, 4> ConstMatrix4;
+typedef const Eigen::Matrix<double, 3, 1> ConstVector3;
+typedef Eigen::Matrix<double, 4, 4> Matrix4;
+
 
 std::ostringstream streamout;
+bool use_dominant_velocity_model;
 
 void imuCallback(const sensor_msgs::Imu::ConstPtr &imu){
+
+    
 
 
     sensor_msgs::Imu::Ptr tr_imu(new sensor_msgs::Imu(*imu));
@@ -59,14 +90,59 @@ void imuCallback(const sensor_msgs::Imu::ConstPtr &imu){
     {
         Eigen::Quaternion<double> q(tr_imu->orientation.w, tr_imu->orientation.x, tr_imu->orientation.y, tr_imu->orientation.z);
 
+        Eigen::Vector3d accel_imu = {tr_imu->linear_acceleration.x, tr_imu->linear_acceleration.y, tr_imu->linear_acceleration.z};
+        Eigen::Vector3d gyro_imu = {tr_imu->angular_velocity.x, tr_imu->angular_velocity.y, tr_imu->angular_velocity.z};
+
+
+        {
+            static Eigen::Vector3d accel_imu_old, gyro_imu_old;
+            static ros::Time last_imu;
+
+            // We could minus off the BIAS here
+            
+
+            if (q_int.coeffs().isZero())
+                q_int = imu_calib.q_sw * q;
+            else{
+                ConstMatrix4 Omega = omegaMatJPL(gyro_imu);
+                ConstMatrix4 OmegaOld = omegaMatJPL(gyro_imu_old);
+
+                Eigen::Matrix<double, 3, 1>  ew_avg = (gyro_imu + gyro_imu_old) / 2.0;
+                Matrix4 OmegaMean = omegaMatJPL(ew_avg);
+
+                double dt = (tr_imu->header.stamp - last_imu).toSec();
+
+                int div = 1;
+                Matrix4 MatExp;
+                MatExp.setIdentity();
+                OmegaMean *= 0.5 * dt;
+                for (int i = 1; i < 5; i++)
+                {
+                    div *= i;
+                    MatExp = MatExp + OmegaMean / div;
+                    OmegaMean *= OmegaMean;
+                }
+
+
+                // first oder quat integration matrix
+                ConstMatrix4 quat_int = MatExp + 1.0 / 48.0 * (Omega * OmegaOld - OmegaOld * Omega) * dt * dt;
+
+                q_int.coeffs() = quat_int * q_int.coeffs();
+                
+            }
+            q_int.normalize();
+
+            last_imu = tr_imu->header.stamp;
+            accel_imu_old = accel_imu;
+            gyro_imu_old = gyro_imu;
+        }
+
+        
+
+        
         q = imu_calib.q_sw * q; // now q represent transformation of frame from imu-frame to world frame
         q.normalize();
 
-        // We could minus off the BIAS here
-        Eigen::Vector3d accel_imu = {tr_imu->linear_acceleration.x, tr_imu->linear_acceleration.y, tr_imu->linear_acceleration.z};
-        
-        
-         
         // std::cout << "bias in world = " << bias_world.transpose() << std::endl;
         Eigen::Vector3d accel_world;
         deadReckoning.transformAcceleration(accel_imu, q, accel_world);
@@ -100,6 +176,15 @@ void imuCallback(const sensor_msgs::Imu::ConstPtr &imu){
         return;
 
     assert(delta_t > 0);
+
+    ////////// DEBUG /////////////////
+
+    // if (!use_dominant_velocity_model && vo_state.state == VelocityObserver::DOMINANT_DIRECTION)
+    //     vo_state.state = VelocityObserver::GENERAL_MOTION;
+
+
+    // vo_state.state = VelocityObserver::GENERAL_MOTION;
+    ////////////////////////
 
     std::string state_str;
     switch(vo_state.state){
@@ -155,14 +240,16 @@ void imuCallback(const sensor_msgs::Imu::ConstPtr &imu){
     
     nav_msgs::Odometry odometry_msg = deadReckoning.getOdometryMsg();
     sensor_msgs::Imu imu_msg = deadReckoning.getAccelWorldMsg();
+    geometry_msgs::PoseWithCovarianceStamped pose_msg = deadReckoning.getPoseMsg();
 
     _odometry_pub.publish(odometry_msg);
+    _pose_pub.publish(pose_msg);
     _imu_world_pub.publish(imu_msg);
 
     streamout << curr_imu_ptr->linear_acceleration.y << " " << odometry_msg.twist.twist.linear.y << std::endl;
 
 
-    
+
 }
 
 int main (int argc, char** argv){
@@ -170,12 +257,20 @@ int main (int argc, char** argv){
     fout.open("accel_world.txt");
 
     //// ROS
-    ros::init(argc, argv, "dead_reckoning_demo");
+    ros::init(argc, argv, "dead_reckoning");
     ros::NodeHandle nh;
     ros::NodeHandle local_nh("~");
 
     bool apply_calibration;
     ROS_ASSERT(local_nh.getParam("apply_calibration", apply_calibration));
+
+
+
+    
+    ROS_ASSERT(local_nh.getParam("use_dominant_velocity_model", use_dominant_velocity_model));
+
+    ROS_WARN_STREAM("use_dominant_velocity_model=" << (use_dominant_velocity_model ? "true" : "false") );
+
     if (apply_calibration){
         std::string imu_calib_file;
         ROS_ASSERT(local_nh.getParam("imu_calib_file", imu_calib_file));
@@ -236,15 +331,25 @@ int main (int argc, char** argv){
     deadReckoning.setParams(params);
 
     // Publishers
-    _odometry_pub = nh.advertise<nav_msgs::Odometry>("dead_reckoning",100);
+    _odometry_pub = local_nh.advertise<nav_msgs::Odometry>("odometry",100);
+    _pose_pub = local_nh.advertise<geometry_msgs::PoseWithCovarianceStamped>("pose",100);
     _imu_world_pub = nh.advertise<sensor_msgs::Imu>("imu_world",100);
+
+    // Subscribe to reset topic
+    _reset_sub = nh.subscribe("/reset", 3, &resetCallback);
+
+
+    // std::cout << "First thing first, describe your current test setup: " << std::endl;
+    // std::string description;
+    // std::getline(std::cin, description);
+
+    std::string description = "default-description";
 
     // Subscribe to IMU topic
     ROS_ASSERT(local_nh.getParam("imu_topic", imu_topic));
     _imu_sub = nh.subscribe(imu_topic, 100, &imuCallback);
 
-    // Subscribe to reset topic
-    _reset_sub = nh.subscribe("/reset", 1, &resetCallback);
+
 
   
     
@@ -254,17 +359,13 @@ int main (int argc, char** argv){
 
     // ros::waitForShutdown();
 
-
-    std::cout << "First thing first, describe your current test setup: " << std::endl;
-    std::string description;
-    std::getline(std::cin, description);
-
     ros::spin();
 
 
     // Prevent Boost mutex error
     _imu_sub.shutdown();
     _odometry_pub.shutdown();
+    _pose_pub.shutdown();
     _reset_sub.shutdown();
     _imu_world_pub.shutdown();
 
